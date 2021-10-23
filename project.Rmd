@@ -1,0 +1,298 @@
+---
+title: "Project of Practical Machine Learning"
+author: "Henry Truong"
+date: "23/10/2021"
+output:
+  pdf_document: default
+  html_document:
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# **Project of Practical Machine Learning**
+
+## **Executive Summary**
+
+The goal of this project is to predict the manner in which participants did the exercise. This is the `classe` variable in the training set. The `training` data will be preprocessed to be clean and relevant to the outcomes. After that, `training` data will be divided into sub-data for training and validating. Certain options of training control and methods of preprocessing will be specified. Several models of classification will also be built and the best model will be selected on basis of the validation set. Predicted outcomes of `testing` data will be estimated using this best model.
+
+## **Background**
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways
+
+## **Data**
+
+The training data for this project are available here: 
+
+[https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+The test data are available here:
+
+[https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+The data for this project come from this source: [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har)
+
+## **Procedure**
+
+### **Getting and Cleaning Data**
+
+Load libraries and data
+```{r}
+library(lubridate)
+library(caret)
+
+training <- read.csv('pml-training.csv')
+testing <- read.csv('pml-testing.csv')
+```
+
+Check what class each column is  
+* For character class
+```{r}
+isCharVec <- rep(NA, times = 160)
+for (i in 1:160) {isCharVec[i] <- is.character(training[1, i])}
+sum(isCharVec)    
+```
+
+* For numeric class
+```{r}
+isNumVec <- rep(NA, times = 160)
+for (i in 1:160) {isNumVec[i] <- is.numeric(training[1, i])}
+sum(isNumVec)     
+```
+
+The sum of 123 and 37 is the number of columns of `training` data  
+
+Check if columns with numeric class make sense or not  
+The answer is yes  
+
+Check if columns with character class make sense or not
+The answer is no  
+```{r}
+names(training)[isCharVec]   
+```
+
+* `user_name` should be of character class
+* `cvtd_timestamp` should be of date class
+* `new_window` should be of factor class
+* `classe` should be of factor class
+* Other columns with character class should be of numeric class
+```{r}
+training$cvtd_timestamp <- dmy_hm(training$cvtd_timestamp)
+training$new_window <- as.factor(training$new_window)
+training$classe <- as.factor(training$classe)
+for (i in (1:37)[-c(1, 2, 3, 37)]) {
+  training[, isCharVec][, i] <- as.numeric(training[, isCharVec][, i])
+  }
+```
+
+Columns of 'training' are now of appropriate class  
+Pay attention to `new_window` column
+```{r}
+table(training$new_window)
+```
+
+Calculate the number of NAs in each column
+```{r}
+numberNAEachCol <- apply(training, 2, function(x) sum(is.na(x)), simplify = T)
+```
+
+Extract indices of columns with NA
+```{r}
+colIdxWithNA <- which(numberNAEachCol > 0)
+length(colIdxWithNA)
+```
+
+Extract indices of columns without NA
+```{r}
+colIdxWithoutNA <- which(numberNAEachCol == 0)
+length(colIdxWithNA)
+```
+
+Pay attention to the number of NAs in columns with NAs
+```{r}
+table(numberNAEachCol[colIdxWithNA])
+```
+
+`19216` is the least number of NAs in columns with NAs  
+There may be a connection between `new_window` column and columns with NAs  
+Particularly, when `new_window` = 'no', a certain set of columns may have NAs  
+
+Let's check
+```{r}
+subsetNo <- subset(training, new_window == 'no')
+# This subset has 19216 rows and 160 columns
+apply(subsetNo, 2, function(x) sum(is.na(x)), simplify = T) -> numberNAEachCol2
+colIdxWithNA2 <- which(numberNAEachCol2 > 0)
+# There are 100 columns with NAs
+```
+
+Check if this set is the same as the previous one
+```{r}
+any(colIdxWithNA2 != colIdxWithNA)
+```
+
+The result is `FALSE` so we get the same set of 100 columns with NAs  
+Check if all elements of these columns are NAs
+```{r}
+table(numberNAEachCol2[colIdxWithNA2])
+```
+
+Indeed, all of these 100 columns have the same number of NAs which is `19216`  
+Therefore, when `new_window` = 'no', a set of 100 columns have NAs  
+
+### **Preprocess Data**
+
+**Note:** A predictive model will be built on the assumption of `new_window` = 'no'   
+
+Create a subset of 'training' with `new_window` column = 'no' and columns without NAs
+```{r}
+trainData <- subset(training, new_window == 'no')[, colIdxWithoutNA]
+```
+
+Check column names of the subset
+```{r}
+names(trainData)
+```
+
+The first 7 columns can be excluded because they are not relevant to `classe` column
+```{r}
+trainData <- trainData[, -c(1:7)]
+```
+
+Split `trainData` into `subTrain` for training and `subValidate` for validating
+```{r}
+set.seed(1234)
+inTrain <- createDataPartition(y = trainData$classe, p = 0.7, list = F)
+subTrain <- trainData[inTrain, ]
+subValidate <- trainData[-inTrain, ]
+```
+
+Set up the training control options when training is performed
+```{r}
+trainCtrl <- trainControl(method = 'repeatedcv', 
+                          number = 5, 
+                          repeats = 3)
+```
+
+### **Building models**
+
+A series of classification models will be built using `subTrain` and the performance of each model will be evaluated by `subValidate`
+
+#### **Decision Tree**
+
+```{r, cache = T}
+set.seed(1234)
+modTree <- train(classe ~ ., 
+                 data = subTrain, 
+                 method = 'rpart', 
+                 trControl = trainCtrl, 
+                 tuneLength = 5)
+predTree <- predict(modTree, subValidate)
+conMatTree <- confusionMatrix(predTree, subValidate$classe)
+conMatTree$overall
+```
+
+#### **Random Forest**
+
+```{r, cache = T}
+set.seed(1234)
+modRF <- train(classe ~ .,
+               data = subTrain,
+               method = 'rf',
+               trControl = trainCtrl,
+               tuneLength = 5)
+predRF <- predict(modRF, subValidate)
+conMatRF <- confusionMatrix(predRF, subValidate$classe)
+conMatRF$overall
+```
+
+#### **Support Vector Machine**
+
+```{r, cache = T}
+set.seed(1234)
+modSVM <- train(classe ~ .,
+                data = subTrain,
+                method = 'svmLinear',
+                preProcess = c('center', 'scale', 'nzv'),
+                trControl = trainCtrl,
+                tuneLength = 5, 
+                verbose = F)
+predSVM <- predict(modSVM, subValidate)
+conMatSVM <- confusionMatrix(predSVM, subValidate$classe)
+conMatSVM$overall
+```
+
+#### **Linear Discriminant Analysis**
+
+```{r, cache = T}
+set.seed(1234)
+modLDA <- train(classe ~ .,
+                data = subTrain,
+                method = 'lda',
+                preProcess = c('center', 'scale', 'nzv'),
+                trControl = trainCtrl,
+                tuneLength = 5,
+                verbose = F)
+predLDA <- predict(modLDA, subValidate)
+conMatLDA <- confusionMatrix(predLDA, subValidate$classe)
+conMatLDA$overall
+```
+
+### **Selecting Best Model**
+
+Create a dataframe showing accuracy of each built model
+```{r}
+accuracyDF <- data.frame(Model = c('Tree', 'RF', 'SVM', 'LDA'),
+                         Accuracy = c(conMatTree$overall[1],
+                                      conMatRF$overall[1],
+                                      conMatSVM$overall[1],
+                                      conMatLDA$overall[1]))
+accuracyDF
+```
+
+The 'modRF' model will be used to predict the outcomes of 'testing' data
+
+### **Predicting `testing` data**
+
+#### **Transform 'testing' data**
+
+* `user_name` should be of character class
+* `cvtd_timestamp` should be of date class
+* `new_window` should be of factor class
+* Other columns with character class should be of numeric class
+```{r}
+testing$cvtd_timestamp <- dmy_hm(testing$cvtd_timestamp)
+testing$new_window <- as.factor(testing$new_window)
+for (i in (1:37)[-c(1, 2, 3, 37)]) {
+  testing[, isCharVec][, i] <- as.numeric(testing[, isCharVec][, i])
+}
+```
+
+Pay attention to `new_window` column
+```{r}
+table(testing$new_window)
+```
+
+All values of `new_window` column are 'no'. It will be reasonable to apply `modRF` model on `testing` data because the model was built on the assumption of `new_window` = 0  
+
+Subset non-NA columns from `testing` data using `colIdxWithoutNA` from `training`
+```{r}
+testData <- testing[, colIdxWithoutNA]
+```
+
+Check if there is any NA value in new `testData` data
+```{r}
+sum(sum(is.na(testData)))
+```
+
+The result is 0 meaning there is no NA
+
+#### **Making prediction**
+
+Using transformed `testData`
+```{r}
+testPred <- predict(modRF, testData)
+testPred
+```
